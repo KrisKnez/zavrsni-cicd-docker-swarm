@@ -1,1 +1,51 @@
-#terst
+networks:
+  traefik-network:
+
+volumes:
+  letsencrypt-storage: # Definira volumen za pohranu Let's Encrypt certifikata.
+
+services:
+  traefik:
+    image: "traefik:v3.1" # Koristi Traefik sliku.
+    command: # Definira Traefik konfiguracijske naredbe.
+      - "--api.dashboard=true"
+      # Definiramo Docker Swarm provider za automatski detekciju konfiguracije
+      - "--providers.swarm=true"
+      - "--providers.swarm.endpoint=unix:///var/run/docker.sock"
+      - "--providers.docker.exposedbydefault=false"
+      # Ako smo na lokalnoj mreži, provjera SSL certifikata nije potrebna
+      - "--serversTransport.insecureSkipVerify=true"
+      # Definiramo ulaze web za HTTP i websecure za HTTPS
+      - "--entryPoints.web.address=:80"
+      - "--entryPoints.websecure.address=:443"
+      # Povećavamo timeout tako da timekom prijenosa velikih datoteka da nam se zahtjev ne ruši
+      - "--entryPoints.websecure.transport.respondingTimeouts.readTimeout=600"
+      - "--entryPoints.websecure.transport.respondingTimeouts.writeTimeout=600"
+      - "--entryPoints.websecure.transport.respondingTimeouts.idleTimeout=600"
+      # Definiramo kako će se SSL certifikati generirati
+      - "--certificatesresolvers.myresolver.acme.tlschallenge=true"
+      - "--certificatesresolvers.myresolver.acme.email=kristijankej@gmail.com"
+      - "--certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json"
+    ports: # Mapira portove na hostu prema kontejneru.
+      - "80:80"
+      - "443:443"
+    networks: # Povezuje servis na definiranu mrežu.
+      - "traefik-network"
+    volumes: # Montira potrebne volumene za rad servisa.
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "letsencrypt-storage:/letsencrypt"
+    deploy:
+      mode: global # Pokreće servis na svim čvorovima.
+      placement:
+        constraints:
+          - node.role == manager # Ograničava pokretanje samo na menadžerskim čvorovima.
+      restart_policy:
+        condition: on-failure # Restartira servis u slučaju greške.
+      labels:
+        - "traefik.enable=true" # Omogućava Traefik za ovaj servis.
+        # Postavlja pravilo https://traefik.cicd.krisknez.com -> Traefik nadzorna ploča
+        - "traefik.http.routers.traefik.rule=Host(`traefik.cicd.krisknez.com`)"
+        - "traefik.http.routers.traefik.entrypoints=websecure"
+        - "traefik.http.routers.traefik.tls.certresolver=myresolver"
+        - "traefik.http.routers.traefik.service=api@internal"
+        - "traefik.http.services.api.loadbalancer.server.port=8080"
